@@ -7,7 +7,7 @@ highs and lows made during the trailing week, then emails an HTML report
 with CSV attachments (or saves them locally if email isn't configured).
 
 Dependencies:
-    pip install yfinance pandas requests lxml
+    pip install -r requirements.txt
 
 Run:
     python weekly_52w_screener.py
@@ -25,6 +25,8 @@ from email.message import EmailMessage
 import pandas as pd
 import requests
 import yfinance as yf
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # =============================== CONFIG ===============================
 INCLUDE_SP500       = True
@@ -36,8 +38,7 @@ WINDOW      = 252    # trailing trading days for the 52-week calc (~1 year)
 BATCH_SIZE  = 200    # tickers per yfinance download call
 AUTO_ADJUST = True   # True = split/dividend adjusted (avoids split artifacts)
 
-# Email — set these as environment variables, do NOT hardcode secrets.
-# For Gmail, create an "App Password" (Google Account > Security > 2FA > App passwords).
+# Email — set these as environment variables — do NOT hardcode secrets.
 SMTP_HOST  = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT  = int(os.environ.get("SMTP_PORT", "587"))
 EMAIL_USER = os.environ.get("EMAIL_USER")            # e.g. you@gmail.com
@@ -46,43 +47,82 @@ EMAIL_TO   = os.environ.get("EMAIL_TO", EMAIL_USER)  # recipient (defaults to yo
 # =====================================================================
 
 
+# -------------------------- HTTP SESSION ------------------------------
+# Centralize request headers and a retry strategy so external fetches are
+# more robust from CI runners (and use a browser-like User-Agent to avoid
+# some servers returning 403 to non-browser clients).
+
+def requests_session_with_retries(retries=3, backoff=1, status_forcelist=(429, 500, 502, 503, 504)):
+    s = requests.Session()
+    retry = Retry(total=retries, backoff_factor=backoff, status_forcelist=status_forcelist, allowed_methods=["GET"])
+    adapter = HTTPAdapter(max_retries=retry)
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    })
+    return s
+
+# create a module-level session to reuse connections
+SESSION = requests_session_with_retries()
+
+
 # ----------------------------- TICKERS -------------------------------
 def get_sp500_tickers():
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    syms = pd.read_html(url)[0]["Symbol"].astype(str).tolist()
-    return [s.replace(".", "-") for s in syms]   # BRK.B -> BRK-B for Yahoo
+    try:
+        r = SESSION.get(url, timeout=30)
+        r.raise_for_status()
+        # pandas.read_html works with a file-like object containing HTML
+        df_list = pd.read_html(io.StringIO(r.text))
+        # first table on the page is the company list
+        syms = df_list[0]["Symbol"].astype(str).tolist()
+        return [s.replace(".", "-") for s in syms]   # BRK.B -> BRK-B for Yahoo
+    except Exception as e:
+        print(f"Error fetching S&P 500 constituents from {url}: {e}")
+        # re-raise so caller can decide whether to continue without SP500
+        raise
 
 
 def get_nasdaq_tickers():
     url = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
-    r = requests.get(url, timeout=30)
-    df = pd.read_csv(io.StringIO(r.text), sep="|")
-    df = df[df.get("Test Issue", "N") == "N"]
-    syms = df["Symbol"].dropna().astype(str).tolist()
-    # keep common-stock-looking symbols; drop warrants/units/footer rows
-    return [s for s in syms if s.isalpha()]
+    try:
+        r = SESSION.get(url, timeout=30)
+        r.raise_for_status()
+        df = pd.read_csv(io.StringIO(r.text), sep="|")
+        df = df[df.get("Test Issue", "N") == "N"]
+        syms = df["Symbol"].dropna().astype(str).tolist()
+        # keep common-stock-looking symbols; drop warrants/units/footer rows
+        return [s for s in syms if s.isalpha()]
+    except Exception as e:
+        print(f"Error fetching Nasdaq-listed symbols from {url}: {e}")
+        raise
 
 
 def get_russell2000_tickers():
     # Sourced from the iShares Russell 2000 ETF (IWM) holdings file.
-    # NOTE: iShares occasionally changes this URL/format — if it breaks,
-    # grab the current "Holdings (CSV)" link from the IWM fund page.
     url = ("https://www.ishares.com/us/products/239710/"
            "ishares-russell-2000-etf/1467271812596.ajax"
            "?fileType=csv&fileName=IWM_holdings&dataType=fund")
-    r = requests.get(url, timeout=30)
-    lines = r.text.splitlines()
-    start = next(i for i, ln in enumerate(lines) if ln.replace('"', "").startswith("Ticker"))
-    df = pd.read_csv(io.StringIO("\n".join(lines[start:])))
-    if "Asset Class" in df.columns:
-        df = df[df["Asset Class"].astype(str).str.contains("Equity", na=False)]
-    syms = df["Ticker"].dropna().astype(str).tolist()
-    out = []
-    for s in syms:
-        s = s.strip().replace(".", "-")
-        if s and s not in ("-", "USD") and any(c.isalpha() for c in s):
-            out.append(s)
-    return out
+    try:
+        r = SESSION.get(url, timeout=30)
+        r.raise_for_status()
+        lines = r.text.splitlines()
+        start = next(i for i, ln in enumerate(lines) if ln.replace('"', "").startswith("Ticker"))
+        df = pd.read_csv(io.StringIO("\n".join(lines[start:])))
+        if "Asset Class" in df.columns:
+            df = df[df["Asset Class"].astype(str).str.contains("Equity", na=False)]
+        syms = df["Ticker"].dropna().astype(str).tolist()
+        out = []
+        for s in syms:
+            s = s.strip().replace(".", "-")
+            if s and s not in ("-", "USD") and any(c.isalpha() for c in s):
+                out.append(s)
+        return out
+    except Exception as e:
+        print(f"Error fetching Russell 2000 holdings from {url}: {e}")
+        raise
 
 
 # ----------------------------- SCREEN --------------------------------
@@ -135,6 +175,7 @@ def screen(tickers):
                         "Date Hit": recent_lo.index[lo_mask][-1].date().isoformat(),
                     })
             except Exception:
+                # continue on per-ticker errors to be resilient to format changes
                 continue
 
     h = pd.DataFrame(highs).sort_values("Ticker") if highs else pd.DataFrame()
@@ -190,10 +231,16 @@ def main():
     tickers = set()
     if INCLUDE_SP500:
         print("Fetching S&P 500 constituents ...")
-        tickers |= set(get_sp500_tickers())
+        try:
+            tickers |= set(get_sp500_tickers())
+        except Exception:
+            print("  S&P 500 fetch failed; continuing without it.")
     if INCLUDE_NASDAQ:
         print("Fetching Nasdaq-listed symbols ...")
-        tickers |= set(get_nasdaq_tickers())
+        try:
+            tickers |= set(get_nasdaq_tickers())
+        except Exception:
+            print("  Nasdaq fetch failed; continuing without it.")
     if INCLUDE_RUSSELL2000:
         print("Fetching Russell 2000 (IWM) holdings ...")
         try:
