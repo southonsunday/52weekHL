@@ -1,0 +1,28 @@
+# Place this at .github/workflows/weekly-screener.yml in a GitHub repo
+# that also contains weekly_52w_screener.py
+name: Weekly 52-Week Screener
+
+on:
+  schedule:
+    # 13:30 UTC every Saturday (= after Friday's US close). Adjust as you like.
+    - cron: "30 13 * * 6"
+  workflow_dispatch:        # lets you also trigger it manually from the Actions tab
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install yfinance pandas requests lxml
+
+      - name: Run screener and email report
+        env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          EMAIL_TO:   ${{ secrets.EMAIL_TO }}
+        run: python weekly_52w_screener.py
