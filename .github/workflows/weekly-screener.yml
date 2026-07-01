@@ -1,28 +1,57 @@
-# Place this at .github/workflows/weekly-screener.yml in a GitHub repo
-# that also contains weekly_52w_screener.py
+# Place this file at: .github/workflows/weekly-screener.yml
+
 name: Weekly 52-Week Screener
 
 on:
   schedule:
-    # 13:30 UTC every Saturday (= after Friday's US close). Adjust as you like.
+    # Every Saturday at 13:30 UTC (after Friday's US market close)
     - cron: "30 13 * * 6"
-  workflow_dispatch:        # lets you also trigger it manually from the Actions tab
+  workflow_dispatch:   # lets you trigger manually from the Actions tab
+
+permissions:
+  contents: write      # required to commit reports back to the repo
 
 jobs:
   screen:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - run: pip install yfinance pandas requests lxml
+      - name: Install dependencies
+        run: pip install yfinance pandas requests lxml
 
-      - name: Run screener and email report
-        env:
-          EMAIL_USER: ${{ secrets.EMAIL_USER }}
-          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
-          EMAIL_TO:   ${{ secrets.EMAIL_TO }}
+      - name: Run screener
         run: python weekly_52w_screener.py
+
+      - name: Show generated files
+        run: ls -la reports/ || echo "WARNING: reports/ directory not found"
+
+      - name: Upload report as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: screener-report-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Commit report to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f reports/ 2>/dev/null || echo "No reports/ folder to add"
+          if git diff --staged --quiet; then
+            echo "Nothing to commit — no new report files."
+          else
+            git commit -m "Weekly screener report $(date -u +%Y-%m-%d)"
+            git push origin HEAD:main
+            echo "Report committed and pushed to repo."
+          fi
