@@ -43,8 +43,9 @@ SMTP_PORT  = int(os.environ.get("SMTP_PORT", "587"))
 EMAIL_USER = os.environ.get("EMAIL_USER")
 EMAIL_PASS = os.environ.get("EMAIL_PASS")
 EMAIL_TO   = os.environ.get("EMAIL_TO", EMAIL_USER)
+# =====================================================================
 
-# Browser-like headers so sites don't block us as a bot
+# Browser-like headers to avoid bot-blocking
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -53,11 +54,14 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
 }
-# =====================================================================
+
+# Path for caching S&P 500 tickers alongside this script
+_SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
+_SP500_CACHE = os.path.join(_SCRIPT_DIR, "sp500_cached.csv")
 
 
 def make_session(retries=3, backoff=1.5):
-    """HTTP session with retry logic and browser-like headers."""
+    """Requests session with retry logic and browser-like headers."""
     session = requests.Session()
     retry = Retry(
         total=retries,
@@ -75,38 +79,61 @@ def make_session(retries=3, backoff=1.5):
 # ----------------------------- TICKERS -------------------------------
 
 def get_sp500_tickers():
-    """Fetch S&P 500 tickers from Wikipedia with fallback to cached CSV."""
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+    """
+    Fetch S&P 500 tickers. Three sources tried in order:
+      1. GitHub-hosted CSV (reliable from GitHub Actions — same host, never blocked)
+      2. Wikipedia (fallback)
+      3. Local cached CSV committed to the repo (final safety net)
+    """
     session = make_session()
+
+    # ── Source 1: GitHub-hosted CSV (most reliable in GitHub Actions) ──
+    github_csv = (
+        "https://raw.githubusercontent.com/datasets/"
+        "s-and-p-500-companies/main/data/constituents.csv"
+    )
     try:
-        resp = session.get(url, timeout=30)
-        resp.raise_for_status()
-        tables = pd.read_html(io.StringIO(resp.text))
-        if not tables:
-            raise RuntimeError("No tables found on Wikipedia S&P 500 page")
+        r = session.get(github_csv, timeout=30)
+        r.raise_for_status()
+        df = pd.read_csv(io.StringIO(r.text))
+        syms = df["Symbol"].astype(str).str.replace(".", "-", regex=False).tolist()
+        # Update local cache while we have fresh data
+        pd.DataFrame({"Symbol": syms}).to_csv(_SP500_CACHE, index=False)
+        print(f"  Fetched {len(syms)} S&P 500 tickers from GitHub datasets CSV.")
+        return syms
+    except Exception as e:
+        print(f"  GitHub CSV fetch failed ({e}). Trying Wikipedia ...")
+
+    # ── Source 2: Wikipedia (secondary) ──
+    try:
+        wiki_url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        r = session.get(wiki_url, timeout=30)
+        r.raise_for_status()
+        # Pass HTML text (not URL) to pd.read_html so it never calls urllib
+        tables = pd.read_html(io.StringIO(r.text))
         df = tables[0]
         syms = df["Symbol"].astype(str).str.replace(".", "-", regex=False).tolist()
-        # Cache for next time in case Wikipedia blocks
-        cache_path = os.path.join(os.path.dirname(__file__) or ".", "sp500_cached.csv")
-        pd.DataFrame({"Symbol": syms}).to_csv(cache_path, index=False)
+        pd.DataFrame({"Symbol": syms}).to_csv(_SP500_CACHE, index=False)
         print(f"  Fetched {len(syms)} S&P 500 tickers from Wikipedia.")
         return syms
     except Exception as e:
-        print(f"  Warning: live S&P 500 fetch failed ({e}). Trying cached file.")
-        cache_path = os.path.join(os.path.dirname(__file__) or ".", "sp500_cached.csv")
-        if os.path.exists(cache_path):
-            df = pd.read_csv(cache_path)
-            syms = df["Symbol"].astype(str).tolist()
-            print(f"  Loaded {len(syms)} S&P 500 tickers from cache.")
-            return syms
-        raise RuntimeError(
-            "Could not fetch S&P 500 tickers from Wikipedia and no cache found. "
-            "Add sp500_cached.csv to the repo as a fallback."
-        )
+        print(f"  Wikipedia fetch failed ({e}). Trying local cache ...")
+
+    # ── Source 3: local cached CSV ──
+    if os.path.exists(_SP500_CACHE):
+        df = pd.read_csv(_SP500_CACHE)
+        syms = df["Symbol"].astype(str).tolist()
+        print(f"  Loaded {len(syms)} S&P 500 tickers from cache.")
+        return syms
+
+    raise RuntimeError(
+        "All S&P 500 sources failed and no sp500_cached.csv found. "
+        "Commit sp500_cached.csv to the repo as a fallback."
+    )
 
 
 def get_nasdaq_tickers():
-    """Fetch Nasdaq-listed tickers from Nasdaq's public symbol directory."""
+    """Fetch all Nasdaq-listed tickers from Nasdaq's public symbol directory."""
     url = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
     session = make_session()
     try:
@@ -119,12 +146,12 @@ def get_nasdaq_tickers():
         print(f"  Fetched {len(syms)} Nasdaq tickers.")
         return syms
     except Exception as e:
-        print(f"  Warning: Nasdaq ticker fetch failed ({e}). Skipping Nasdaq.")
+        print(f"  Nasdaq fetch failed ({e}). Skipping Nasdaq.")
         return []
 
 
 def get_russell2000_tickers():
-    """Fetch Russell 2000 tickers from iShares IWM holdings."""
+    """Fetch Russell 2000 tickers from the iShares IWM ETF holdings."""
     url = (
         "https://www.ishares.com/us/products/239710/"
         "ishares-russell-2000-etf/1467271812596.ajax"
@@ -151,7 +178,7 @@ def get_russell2000_tickers():
         print(f"  Fetched {len(out)} Russell 2000 tickers.")
         return out
     except Exception as e:
-        print(f"  Warning: Russell 2000 fetch failed ({e}). Skipping Russell 2000.")
+        print(f"  Russell 2000 fetch failed ({e}). Skipping Russell 2000.")
         return []
 
 
@@ -291,22 +318,18 @@ def main():
         ("new_52w_lows.csv",  (lows  if not lows.empty  else pd.DataFrame()).to_csv(index=False)),
     ]
 
-    # Save report files
     stamp   = dt.date.today().isoformat()
     out_dir = os.environ.get("REPORT_DIR", "reports")
     os.makedirs(out_dir, exist_ok=True)
 
-    html_path = os.path.join(out_dir, f"report_{stamp}.html")
-    with open(html_path, "w") as f:
+    with open(os.path.join(out_dir, f"report_{stamp}.html"), "w") as f:
         f.write(html)
-
     for name, text in attachments:
         with open(os.path.join(out_dir, f"{stamp}_{name}"), "w") as f:
             f.write(text)
 
     print(f"Report saved to {out_dir}/")
 
-    # Send email if credentials are configured
     if EMAIL_USER and EMAIL_PASS:
         send_email(html, attachments)
     else:
