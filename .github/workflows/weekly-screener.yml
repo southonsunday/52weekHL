@@ -50,6 +50,10 @@ jobs:
           if git diff --staged --quiet; then
             echo no new files to commit
           else
+            git stash
+            git pull --rebase origin main
+            git stash pop
+            git add -f reports/ || true
             git commit -m "Weekly screener report $(date -u +%Y-%m-%d)"
             git push origin HEAD:main
             echo report committed and pushed
