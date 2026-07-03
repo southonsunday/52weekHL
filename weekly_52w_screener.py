@@ -135,14 +135,40 @@ def get_sp500_with_sectors():
 
 
 def get_nasdaq_tickers():
+    """
+    Fetch Nasdaq common stocks only -- strips out ETFs, warrants, preferred
+    shares, depositary receipts, notes, closed-end funds, and other
+    non-common-stock securities.
+    """
     url = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
     try:
         r = make_session().get(url, timeout=30)
         r.raise_for_status()
         df = pd.read_csv(io.StringIO(r.text), sep="|")
+
+        # Drop test issues
         df = df[df.get("Test Issue", "N") == "N"]
-        syms = [s for s in df["Symbol"].dropna().astype(str) if s.isalpha()]
-        print(f"  Fetched {len(syms)} Nasdaq tickers.")
+
+        # Drop ETFs using the dedicated ETF column in the Nasdaq file
+        if "ETF" in df.columns:
+            df = df[df["ETF"].astype(str).str.strip() != "Y"]
+
+        # Drop by security name keywords (warrants, preferred, funds, etc.)
+        if "Security Name" in df.columns:
+            name = df["Security Name"].astype(str).str.lower()
+            drop_keywords = (
+                "warrant|pfd|preferred|depositary|unit |units |"
+                r" note | notes |fund|trust|etf|etn|index|bond|"
+                "right |rights |certificate|portfolio|lp |l\.p\."
+            )
+            df = df[~name.str.contains(drop_keywords, regex=True, na=False)]
+
+        # Keep only simple 1-5 character purely alphabetic tickers
+        # (rules out most warrants W/WS suffixes, preferred P suffixes, etc.)
+        syms = df["Symbol"].dropna().astype(str).tolist()
+        syms = [s for s in syms if s.isalpha() and 1 <= len(s) <= 5]
+
+        print(f"  Fetched {len(syms)} Nasdaq common stock tickers (ETFs and non-stocks removed).")
         return syms
     except Exception as e:
         print(f"  Nasdaq fetch failed ({e}). Skipping.")
@@ -519,25 +545,47 @@ def main():
     html  = build_html(highs, lows)
     brief = build_email_brief(highs, lows)
 
-    h_csv = (highs if not highs.empty else pd.DataFrame()).to_csv(index=False)
-    l_csv = (lows  if not lows.empty  else pd.DataFrame()).to_csv(index=False)
-    attachments = [
-        ("new_52w_highs.csv", h_csv),
-        ("new_52w_lows.csv",  l_csv),
-    ]
-
-    # Save files
     stamp   = dt.date.today().isoformat()
     out_dir = os.environ.get("REPORT_DIR", "reports")
     os.makedirs(out_dir, exist_ok=True)
 
+    # --- PRIMARY OUTPUT: single combined CSV (easy to filter in Excel) ---
+    h_df = highs.copy() if not highs.empty else pd.DataFrame()
+    l_df = lows.copy()  if not lows.empty  else pd.DataFrame()
+
+    if not h_df.empty:
+        h_df.insert(0, "Signal", "NEW_HIGH")
+        # Rename 52W High / % From High for combined view
+        h_df = h_df.rename(columns={"52W High": "52W Extreme", "% From High": "% From Extreme"})
+    if not l_df.empty:
+        l_df.insert(0, "Signal", "NEW_LOW")
+        l_df = l_df.rename(columns={"52W Low": "52W Extreme", "% From Low": "% From Extreme"})
+
+    combined = pd.concat([h_df, l_df], ignore_index=True)
+    combined_csv = combined.to_csv(index=False)
+
+    # Individual CSVs (highs only / lows only)
+    h_csv = (highs if not highs.empty else pd.DataFrame()).to_csv(index=False)
+    l_csv = (lows  if not lows.empty  else pd.DataFrame()).to_csv(index=False)
+
+    # Email attachments: combined CSV is first/primary
+    attachments = [
+        (f"screener_{stamp}.csv",   combined_csv),   # combined -- main file
+        ("new_52w_highs.csv",       h_csv),
+        ("new_52w_lows.csv",        l_csv),
+    ]
+
+    # Save all files
+    with open(os.path.join(out_dir, f"screener_{stamp}.csv"), "w") as f:
+        f.write(combined_csv)
+    with open(os.path.join(out_dir, f"{stamp}_new_52w_highs.csv"), "w") as f:
+        f.write(h_csv)
+    with open(os.path.join(out_dir, f"{stamp}_new_52w_lows.csv"), "w") as f:
+        f.write(l_csv)
     with open(os.path.join(out_dir, f"report_{stamp}.html"), "w") as f:
         f.write(html)
     with open(os.path.join(out_dir, f"brief_{stamp}.txt"), "w") as f:
         f.write(brief)
-    for name, text in attachments:
-        with open(os.path.join(out_dir, f"{stamp}_{name}"), "w") as f:
-            f.write(text)
 
     print(f"Report saved to {out_dir}/")
     print("\n--- WEEKLY BRIEF PREVIEW ---")
