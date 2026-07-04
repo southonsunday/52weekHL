@@ -1,10 +1,10 @@
 Weekly 52-Week Screener | 2026-07-04
 =============================================
-New Highs : 564
+New Highs : 565
 New Lows  : 264
 
 TOP SECTORS -- HIGHS:
-  Other: 471
+  Other: 472
   Health Care: 19
   Financials: 18
   Industrials: 14
