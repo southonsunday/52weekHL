@@ -3,7 +3,8 @@
 Weekly 52-Week High/Low Screener - Enhanced Edition
 -----------------------------------------------------
 Screens S&P 500, Russell 2000, and Nasdaq stocks for new 52-week highs/lows.
-Enriched with: sector grouping, volume spike, RSI, % from 52-week mark.
+Enriched with: sector grouping, volume spike, RSI, % from 52-week mark,
+and Ben Graham fundamental scores (Defensive + Enterprising criteria).
 Saves an HTML report + CSVs and optionally sends an email brief.
 
 Dependencies:
@@ -17,6 +18,7 @@ import smtplib
 import datetime as dt
 from email.message import EmailMessage
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
@@ -306,6 +308,119 @@ def screen(tickers, sector_map):
     return h, l
 
 
+# ----------------------- GRAHAM SCREENING ----------------------------
+#
+# Implements Ben Graham's criteria from "The Intelligent Investor":
+#   Defensive Investor  (Ch. 14): P/E ≤ 15, P/B ≤ 1.5, CR ≥ 2.0,
+#                                 D/E ≤ 1.0, pays dividend, EPS > 0
+#   Enterprising Investor (Ch. 15): P/E ≤ 9, P/B ≤ 1.2, CR ≥ 1.5,
+#                                   D/E ≤ 1.1, pays dividend, EPS > 0
+#
+# Fundamentals are fetched only for stocks that HIT a 52W extreme
+# (typically 50-400 stocks, not the full 5,000 universe).
+
+def _fetch_one_fundamental(sym):
+    """Fetch Graham-relevant fundamentals for one ticker. Returns (sym, dict)."""
+    try:
+        info = yf.Ticker(sym).info
+        # yfinance debtToEquity is expressed in %; convert to ratio (45.0 → 0.45)
+        de = info.get("debtToEquity")
+        if de is not None and not pd.isna(de):
+            de = round(de / 100, 3)
+        div = info.get("dividendYield") or 0
+        return sym, {
+            "P/E":         round(info["trailingPE"], 1)   if info.get("trailingPE")   else None,
+            "P/B":         round(info["priceToBook"], 2)  if info.get("priceToBook")  else None,
+            "Curr Ratio":  round(info["currentRatio"], 2) if info.get("currentRatio") else None,
+            "D/E":         de,
+            "Div Yield %": round(div * 100, 2) if div else None,
+            "EPS TTM":     round(info["trailingEps"], 2)  if info.get("trailingEps")  else None,
+        }
+    except Exception:
+        return sym, {}
+
+
+def fetch_graham_fundamentals(tickers, max_workers=20):
+    """Fetch fundamentals concurrently for hit stocks. Returns dict keyed by ticker."""
+    print(f"  Fetching Graham fundamentals for {len(tickers)} stocks ...")
+    results = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_fetch_one_fundamental, t): t for t in tickers}
+        done = 0
+        for fut in as_completed(futures):
+            sym, data = fut.result()
+            results[sym] = data
+            done += 1
+            if done % 50 == 0:
+                print(f"    {done}/{len(tickers)} fundamentals fetched ...")
+    print(f"  Done. {len(results)} records collected.")
+    return results
+
+
+def add_graham_scores(df, fundamentals):
+    """
+    Enrich a highs/lows DataFrame with Graham fundamental columns.
+
+    Columns added:
+      P/E, P/B, Curr Ratio, D/E, Div Yield %, EPS TTM
+      Graham Def   — Y/N: passes all 6 Defensive Investor criteria
+      Graham Ent   — Y/N: passes all 6 Enterprising Investor criteria
+      Graham Score — # of Defensive criteria passed (0-6)
+    """
+    if df.empty:
+        return df
+
+    rows = []
+    for _, row in df.iterrows():
+        f   = fundamentals.get(row["Ticker"], {})
+        pe  = f.get("P/E")
+        pb  = f.get("P/B")
+        cr  = f.get("Curr Ratio")
+        de  = f.get("D/E")
+        div = f.get("Div Yield %") or 0
+        eps = f.get("EPS TTM")
+
+        def ok(val, op, thresh):
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                return False
+            return val <= thresh if op == "<=" else val >= thresh
+
+        # Defensive Investor: safe, established large-caps
+        d = [
+            ok(pe, "<=", 15),   # moderate earnings multiple
+            ok(pb, "<=", 1.5),  # moderate price-to-book
+            ok(cr, ">=", 2.0),  # strong liquidity
+            ok(de, "<=", 1.0),  # conservative leverage
+            div > 0,            # pays a dividend
+            bool(eps and eps > 0),  # profitable
+        ]
+
+        # Enterprising Investor: deeper value / turnaround situations
+        e = [
+            ok(pe, "<=", 9),    # deep value P/E
+            ok(pb, "<=", 1.2),  # near book value
+            ok(cr, ">=", 1.5),  # adequate liquidity
+            ok(de, "<=", 1.1),  # manageable debt
+            div > 0,
+            bool(eps and eps > 0),
+        ]
+
+        rows.append({
+            "P/E":          pe,
+            "P/B":          pb,
+            "Curr Ratio":   cr,
+            "D/E":          de,
+            "Div Yield %":  f.get("Div Yield %"),
+            "EPS TTM":      eps,
+            "Graham Def":   "Y" if all(d) else "N",
+            "Graham Ent":   "Y" if all(e) else "N",
+            "Graham Score": sum(d),  # 0-6; 6 = passes all defensive criteria
+        })
+
+    fund_df = pd.DataFrame(rows, index=df.index)
+    return pd.concat([df, fund_df], axis=1)
+
+
 # ---------------------------- REPORT ---------------------------------
 
 STYLE = """
@@ -541,6 +656,19 @@ def main():
 
     highs, lows = screen(tickers, sector_map)
     print(f"\nFound {len(highs)} new highs and {len(lows)} new lows.")
+
+    # --- Graham fundamental enrichment (fetched only for hit stocks) ---
+    all_hits = set()
+    if not highs.empty:
+        all_hits.update(highs["Ticker"].tolist())
+    if not lows.empty:
+        all_hits.update(lows["Ticker"].tolist())
+
+    if all_hits:
+        print("\nRunning Graham fundamental screen ...")
+        fundamentals = fetch_graham_fundamentals(sorted(all_hits))
+        highs = add_graham_scores(highs, fundamentals)
+        lows  = add_graham_scores(lows,  fundamentals)
 
     html  = build_html(highs, lows)
     brief = build_email_brief(highs, lows)
