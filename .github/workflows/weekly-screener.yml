@@ -24,7 +24,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install yfinance pandas requests lxml
+        run: pip install yfinance pandas requests lxml openpyxl
 
       - name: Run screener
         run: python weekly_52w_screener.py
