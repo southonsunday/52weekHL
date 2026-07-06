@@ -1,0 +1,36 @@
+Weekly 52-Week Screener | 2026-07-06
+=============================================
+New Highs : 561
+New Lows  : 266
+
+TOP SECTORS -- HIGHS:
+  Other: 469
+  Health Care: 19
+  Financials: 18
+  Industrials: 13
+  Information Technology: 12
+
+TOP SECTORS -- LOWS:
+  Other: 248
+  Financials: 4
+  Industrials: 3
+  Communication Services: 2
+  Consumer Discretionary: 2
+
+HIGH-VOLUME BREAKOUTS (2x+ avg volume):
+  AFBI: 2.7x avg volume
+  AIRT: 2.6x avg volume
+  ALIS: 3.2x avg volume
+  BIXI: 3.7x avg volume
+  BSET: 2.3x avg volume
+  CPIX: 2.2x avg volume
+  CSTE: 4.1x avg volume
+  EMIS: 4.0x avg volume
+  EQ: 3.5x avg volume
+  GTEN: 7.1x avg volume
+
+OVERBOUGHT HIGHS (RSI > 70): EA, LYV, ABNB, MNST, AIZ, ALL, BEN, CB, CFG, CINF, EG, FITB, GL, L, TROW
+
+OVERSOLD LOWS (RSI < 30): ROL, CTSH, ABTC, ACTU, ADGM, AEMD, ALPS, ARAY, ARTL, AVAT, BGIN, BGL, BIOX, BJDX, BMRA
+
+Full report and CSVs attached.
