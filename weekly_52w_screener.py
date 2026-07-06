@@ -425,7 +425,7 @@ def add_graham_scores(df, fundamentals):
 
 STYLE = """
 <style>
-body { font-family: Arial, Helvetica, sans-serif; color: #1a1a1a; max-width: 1100px; margin: 0 auto; padding: 20px; }
+body { font-family: Arial, Helvetica, sans-serif; color: #1a1a1a; max-width: 1200px; margin: 0 auto; padding: 20px; }
 h1   { font-size: 22px; border-bottom: 2px solid #0066cc; padding-bottom: 8px; }
 h2   { font-size: 17px; margin-top: 28px; color: #0066cc; }
 h3   { font-size: 14px; margin-top: 16px; margin-bottom: 4px; color: #444; }
@@ -447,7 +447,132 @@ h3   { font-size: 14px; margin-top: 16px; margin-bottom: 4px; color: #444; }
 .t td, .t th { border: 1px solid #ddd; padding: 5px 9px; text-align: left; }
 .t th { background: #f4f4f4; font-size: 11px; }
 .t tr:hover { background: #f9f9f9; }
+/* Column guide */
+.guide-box  { background: #fff; border: 1px solid #d0d7e3; border-radius: 6px; padding: 16px 20px; margin: 20px 0; }
+.guide-box summary { font-weight: bold; font-size: 14px; cursor: pointer; color: #0066cc; padding: 4px 0; }
+.guide-box summary:hover { color: #004499; }
+.guide-tbl  { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 12px; }
+.guide-tbl th { background: #1a3a6b; color: #fff; padding: 7px 10px; text-align: left; font-size: 11px; }
+.guide-tbl td { border: 1px solid #dde3ef; padding: 6px 10px; vertical-align: top; }
+.guide-tbl tr:nth-child(even) td { background: #f5f7fc; }
+.guide-tbl .col-name { font-weight: bold; white-space: nowrap; color: #1a3a6b; }
+.guide-tbl .range    { font-weight: bold; color: #1a7a1a; white-space: nowrap; }
+.guide-tbl .section-hdr td { background: #e8edf8; font-weight: bold; font-size: 11px;
+                               color: #444; text-transform: uppercase; letter-spacing: .5px; }
 </style>
+"""
+
+# --------------- COLUMN GUIDE DATA ---------------
+# (column_name, why_it_matters, graham_range)
+COLUMN_GUIDE = [
+    # --- Price / Signal columns ---
+    ("_SECTION_", "Price & Momentum Signals", ""),
+    ("Signal",
+     "Whether the stock hit a 52-week HIGH or LOW this week. "
+     "Highs show strength and momentum; lows show weakness or potential deep value.",
+     "—"),
+    ("Ticker",        "Stock symbol traded on the exchange.",                                          "—"),
+    ("Sector",
+     "GICS industry sector. Helps spot which parts of the market are leading or lagging. "
+     "Stocks not in the S&P 500 show 'Other'.",
+     "—"),
+    ("Last Close",    "Most recent daily closing price.",                                              "—"),
+    ("52W Extreme",
+     "The rolling 52-week high or low price level the stock just touched. "
+     "This is the threshold that triggered the signal.",
+     "—"),
+    ("% From Extreme",
+     "How far today's closing price sits from the 52-week extreme. "
+     "A reading near 0% means the stock is right at the breakout/breakdown level.",
+     "Near 0% = strongest signal"),
+    ("RSI",
+     "14-day Relative Strength Index. Measures price momentum on a 0–100 scale. "
+     "Helps identify whether a breakout stock is overextended or a breakdown stock is truly oversold.",
+     "<30 oversold · 30–70 neutral · >70 overbought"),
+    ("Vol vs Avg",
+     "Today's trading volume divided by the 20-day average volume. "
+     "High volume on a breakout signals institutional conviction; "
+     "a low-volume breakout is more likely to fail.",
+     ">2× = strong conviction · <1× = weak signal"),
+    ("Date Hit",      "The specific trading date the 52-week extreme was first touched.",             "—"),
+    # --- Graham Fundamental columns ---
+    ("_SECTION_", "Ben Graham Fundamental Screen  (The Intelligent Investor)", ""),
+    ("P/E",
+     "Price divided by trailing 12-month earnings per share. "
+     "What you pay for each $1 of profit. Graham considered anything above 15–20 speculative.",
+     "Defensive: ≤ 15 · Enterprising: ≤ 9"),
+    ("P/B",
+     "Price divided by book value per share (net assets). "
+     "Measures how much above intrinsic asset value you're paying. "
+     "Graham also used the combined rule: P/E × P/B ≤ 22.5.",
+     "Defensive: ≤ 1.5 · Enterprising: ≤ 1.2"),
+    ("Curr Ratio",
+     "Current assets divided by current liabilities. "
+     "Graham's key liquidity test — a company must be able to meet its near-term obligations "
+     "without distress.",
+     "Defensive: ≥ 2.0 · Enterprising: ≥ 1.5"),
+    ("D/E",
+     "Total debt divided by shareholders' equity. "
+     "Graham wanted companies to carry modest debt relative to their equity cushion. "
+     "High leverage amplifies losses in downturns.",
+     "Defensive: ≤ 1.0 · Enterprising: ≤ 1.1"),
+    ("Div Yield %",
+     "Annual dividend as a percentage of the stock price. "
+     "Graham required an uninterrupted dividend record as proof of financial stability "
+     "and shareholder-friendly management.",
+     "Any dividend > 0% required"),
+    ("EPS TTM",
+     "Earnings per share over the trailing 12 months. "
+     "Graham required positive earnings — a company losing money fails the basic quality test.",
+     "> 0 required (profitable)"),
+    ("Graham Def",
+     "Y = the stock passes all 6 Defensive Investor criteria simultaneously. "
+     "Designed for conservative investors who want safe, established, large-cap quality. "
+     "Expect a small number of Y's — this is intentionally strict.",
+     "Y = all 6 criteria met"),
+    ("Graham Ent",
+     "Y = the stock passes all 6 Enterprising Investor criteria. "
+     "Designed for active investors willing to dig deeper into undervalued or turnaround situations. "
+     "Looser thresholds than Defensive.",
+     "Y = all 6 criteria met"),
+    ("Graham Score",
+     "Count of Defensive Investor criteria passed, from 0 to 6. "
+     "Use this as a continuous quality filter — stocks scoring 4–5 may be one earnings "
+     "revision away from passing fully.",
+     "6 = full Graham quality · ≥ 4 = worth researching"),
+]
+
+
+def build_column_guide_html():
+    """Return a collapsible HTML column reference box."""
+    rows_html = ""
+    for item in COLUMN_GUIDE:
+        col, why, rng = item
+        if col == "_SECTION_":
+            rows_html += (
+                f'<tr class="section-hdr"><td colspan="3">{why}</td></tr>'
+            )
+        else:
+            rng_cell = f'<span class="range">{rng}</span>' if rng != "—" else '<span style="color:#aaa">—</span>'
+            rows_html += (
+                f"<tr>"
+                f'<td class="col-name">{col}</td>'
+                f"<td>{why}</td>"
+                f"<td>{rng_cell}</td>"
+                f"</tr>"
+            )
+    return f"""
+<details class="guide-box" open>
+  <summary>Column Reference Guide — what each metric means and what Ben Graham looked for</summary>
+  <table class="guide-tbl">
+    <thead>
+      <tr><th>Column</th><th>Why It Matters</th><th>Graham's Target / Range</th></tr>
+    </thead>
+    <tbody>
+      {rows_html}
+    </tbody>
+  </table>
+</details>
 """
 
 
@@ -546,6 +671,7 @@ def build_html(highs, lows):
           f"A stock qualifies if it hit its trailing {WINDOW}-day extreme in the last {RECENT_DAYS} trading days. "
           f"Sector shown for S&amp;P 500 members; others labelled Other.</p>"
         + summary_html
+        + build_column_guide_html()
         + tbl_section("New 52-Week Highs", highs)
         + tbl_section("New 52-Week Lows", lows)
     )
@@ -677,39 +803,71 @@ def main():
     out_dir = os.environ.get("REPORT_DIR", "reports")
     os.makedirs(out_dir, exist_ok=True)
 
-    # --- PRIMARY OUTPUT: single combined CSV (easy to filter in Excel) ---
+    # --- Build combined results DataFrame ---
     h_df = highs.copy() if not highs.empty else pd.DataFrame()
     l_df = lows.copy()  if not lows.empty  else pd.DataFrame()
 
     if not h_df.empty:
         h_df.insert(0, "Signal", "NEW_HIGH")
-        # Rename 52W High / % From High for combined view
         h_df = h_df.rename(columns={"52W High": "52W Extreme", "% From High": "% From Extreme"})
     if not l_df.empty:
         l_df.insert(0, "Signal", "NEW_LOW")
         l_df = l_df.rename(columns={"52W Low": "52W Extreme", "% From Low": "% From Extreme"})
 
     combined = pd.concat([h_df, l_df], ignore_index=True)
+
+    # --- Column Guide DataFrame (for Excel tab) ---
+    guide_rows = []
+    for item in COLUMN_GUIDE:
+        col, why, rng = item
+        if col == "_SECTION_":
+            guide_rows.append({"Column": f"— {why} —", "Why It Matters": "", "Graham's Target / Range": ""})
+        else:
+            guide_rows.append({"Column": col, "Why It Matters": why, "Graham's Target / Range": rng})
+    guide_df = pd.DataFrame(guide_rows)
+
+    # --- PRIMARY OUTPUT: Excel workbook with two sheets ---
+    excel_path = os.path.join(out_dir, f"screener_{stamp}.xlsx")
+    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+        combined.to_excel(writer, sheet_name="Results", index=False)
+        guide_df.to_excel(writer, sheet_name="Column Guide", index=False)
+        # Auto-fit column widths on Results sheet
+        ws = writer.sheets["Results"]
+        for col_cells in ws.columns:
+            max_len = max((len(str(c.value)) if c.value else 0) for c in col_cells)
+            ws.column_dimensions[col_cells[0].column_letter].width = min(max_len + 3, 40)
+        # Auto-fit Column Guide sheet
+        ws2 = writer.sheets["Column Guide"]
+        ws2.column_dimensions["A"].width = 16
+        ws2.column_dimensions["B"].width = 80
+        ws2.column_dimensions["C"].width = 40
+        for row in ws2.iter_rows():
+            for cell in row:
+                cell.alignment = __import__("openpyxl").styles.Alignment(wrap_text=True, vertical="top")
+    print(f"Excel workbook saved: {excel_path}")
+
+    # --- Also keep a flat CSV as fallback ---
     combined_csv = combined.to_csv(index=False)
-
-    # Individual CSVs (highs only / lows only)
-    h_csv = (highs if not highs.empty else pd.DataFrame()).to_csv(index=False)
-    l_csv = (lows  if not lows.empty  else pd.DataFrame()).to_csv(index=False)
-
-    # Email attachments: combined CSV is first/primary
-    attachments = [
-        (f"screener_{stamp}.csv",   combined_csv),   # combined -- main file
-        ("new_52w_highs.csv",       h_csv),
-        ("new_52w_lows.csv",        l_csv),
-    ]
-
-    # Save all files
     with open(os.path.join(out_dir, f"screener_{stamp}.csv"), "w") as f:
         f.write(combined_csv)
-    with open(os.path.join(out_dir, f"{stamp}_new_52w_highs.csv"), "w") as f:
-        f.write(h_csv)
-    with open(os.path.join(out_dir, f"{stamp}_new_52w_lows.csv"), "w") as f:
-        f.write(l_csv)
+
+    # Email attachment: send the Excel file
+    try:
+        with open(excel_path, "rb") as xf:
+            excel_bytes = xf.read()
+    except Exception:
+        excel_bytes = None
+
+    # Plain-text CSV attachments as fallback
+    h_csv = (highs if not highs.empty else pd.DataFrame()).to_csv(index=False)
+    l_csv = (lows  if not lows.empty  else pd.DataFrame()).to_csv(index=False)
+    attachments = [
+        (f"screener_{stamp}.csv", combined_csv),
+        ("new_52w_highs.csv",     h_csv),
+        ("new_52w_lows.csv",      l_csv),
+    ]
+
+    # Save HTML + brief
     with open(os.path.join(out_dir, f"report_{stamp}.html"), "w") as f:
         f.write(html)
     with open(os.path.join(out_dir, f"brief_{stamp}.txt"), "w") as f:
