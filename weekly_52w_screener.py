@@ -801,7 +801,9 @@ def main():
 
     stamp   = dt.date.today().isoformat()
     out_dir = os.environ.get("REPORT_DIR", "reports")
-    os.makedirs(out_dir, exist_ok=True)
+    # latest/ always contains only the current week's files (clean download)
+    latest_dir = os.path.join(out_dir, "latest")
+    os.makedirs(latest_dir, exist_ok=True)
 
     # --- Build combined results DataFrame ---
     h_df = highs.copy() if not highs.empty else pd.DataFrame()
@@ -826,52 +828,36 @@ def main():
             guide_rows.append({"Column": col, "Why It Matters": why, "Graham's Target / Range": rng})
     guide_df = pd.DataFrame(guide_rows)
 
-    # --- PRIMARY OUTPUT: Excel workbook with two sheets ---
-    excel_path = os.path.join(out_dir, f"screener_{stamp}.xlsx")
-    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-        combined.to_excel(writer, sheet_name="Results", index=False)
-        guide_df.to_excel(writer, sheet_name="Column Guide", index=False)
-        # Auto-fit column widths on Results sheet
-        ws = writer.sheets["Results"]
-        for col_cells in ws.columns:
-            max_len = max((len(str(c.value)) if c.value else 0) for c in col_cells)
-            ws.column_dimensions[col_cells[0].column_letter].width = min(max_len + 3, 40)
-        # Auto-fit Column Guide sheet
-        ws2 = writer.sheets["Column Guide"]
-        ws2.column_dimensions["A"].width = 16
-        ws2.column_dimensions["B"].width = 80
-        ws2.column_dimensions["C"].width = 40
-        for row in ws2.iter_rows():
-            for cell in row:
-                cell.alignment = __import__("openpyxl").styles.Alignment(wrap_text=True, vertical="top")
-    print(f"Excel workbook saved: {excel_path}")
+    # --- Helper: write Excel workbook with Results + Column Guide tabs ---
+    def write_excel(path):
+        with pd.ExcelWriter(path, engine="openpyxl") as writer:
+            combined.to_excel(writer, sheet_name="Results", index=False)
+            guide_df.to_excel(writer, sheet_name="Column Guide", index=False)
+            from openpyxl.styles import Alignment
+            ws = writer.sheets["Results"]
+            for col_cells in ws.columns:
+                max_len = max((len(str(c.value)) if c.value else 0) for c in col_cells)
+                ws.column_dimensions[col_cells[0].column_letter].width = min(max_len + 3, 40)
+            ws2 = writer.sheets["Column Guide"]
+            ws2.column_dimensions["A"].width = 16
+            ws2.column_dimensions["B"].width = 80
+            ws2.column_dimensions["C"].width = 40
+            for row in ws2.iter_rows():
+                for cell in row:
+                    cell.alignment = Alignment(wrap_text=True, vertical="top")
 
-    # --- Also keep a flat CSV as fallback ---
+    # --- Save to latest/ (fixed filenames — always the current week only) ---
+    write_excel(os.path.join(latest_dir, "screener.xlsx"))
     combined_csv = combined.to_csv(index=False)
-    with open(os.path.join(out_dir, f"screener_{stamp}.csv"), "w") as f:
+    with open(os.path.join(latest_dir, "screener.csv"), "w") as f:
         f.write(combined_csv)
-
-    # Email attachment: send the Excel file
-    try:
-        with open(excel_path, "rb") as xf:
-            excel_bytes = xf.read()
-    except Exception:
-        excel_bytes = None
-
-    # Plain-text CSV attachments as fallback
-    h_csv = (highs if not highs.empty else pd.DataFrame()).to_csv(index=False)
-    l_csv = (lows  if not lows.empty  else pd.DataFrame()).to_csv(index=False)
-    attachments = [
-        (f"screener_{stamp}.csv", combined_csv),
-        ("new_52w_highs.csv",     h_csv),
-        ("new_52w_lows.csv",      l_csv),
-    ]
-
-    # Save HTML + brief
-    with open(os.path.join(out_dir, f"report_{stamp}.html"), "w") as f:
+    with open(os.path.join(latest_dir, "report.html"), "w") as f:
         f.write(html)
-    with open(os.path.join(out_dir, f"brief_{stamp}.txt"), "w") as f:
+    with open(os.path.join(latest_dir, "brief.txt"), "w") as f:
         f.write(brief)
+    print(f"Latest files saved to {latest_dir}/")
+
+    attachments = [(f"screener_{stamp}.csv", combined_csv)]
 
     print(f"Report saved to {out_dir}/")
     print("\n--- WEEKLY BRIEF PREVIEW ---")
