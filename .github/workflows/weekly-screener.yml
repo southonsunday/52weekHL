@@ -31,14 +31,14 @@ jobs:
 
       - name: Show generated files
         run: |
-          echo --- files in reports/ ---
-          ls -la reports/ || echo no reports folder found
+          echo --- files in reports/latest/ ---
+          ls -la reports/latest/ || echo no latest folder found
 
       - name: Upload report as artifact
         uses: actions/upload-artifact@v4
         with:
           name: screener-report-${{ github.run_id }}
-          path: reports/
+          path: reports/latest/
           if-no-files-found: warn
           retention-days: 90
 
