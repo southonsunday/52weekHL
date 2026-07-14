@@ -1,0 +1,36 @@
+Weekly 52-Week Screener | 2026-07-11
+=============================================
+New Highs : 327
+New Lows  : 202
+
+TOP SECTORS -- HIGHS:
+  Other: 245
+  Financials: 24
+  Health Care: 12
+  Real Estate: 10
+  Utilities: 10
+
+TOP SECTORS -- LOWS:
+  Other: 192
+  Real Estate: 4
+  Consumer Discretionary: 3
+  Energy: 2
+  Industrials: 1
+
+HIGH-VOLUME BREAKOUTS (2x+ avg volume):
+  CUE: 2.6x avg volume
+  DWSN: 3.7x avg volume
+  FBRX: 3.9x avg volume
+  GTERA: 4.5x avg volume
+  IONS: 3.2x avg volume
+  MPLT: 2.1x avg volume
+  POWW: 2.0x avg volume
+  SNAL: 7.9x avg volume
+  WDFC: 5.3x avg volume
+  ADGM: 3.1x avg volume
+
+OVERBOUGHT HIGHS (RSI > 70): EA, BBY, YUM, MNST, MPC, PSX, VLO, ACGL, AFL, AIZ, ALL, EG, FITB, L, NTRS
+
+OVERSOLD LOWS (RSI < 30): ACTU, ADGM, AEMD, AIFC, ALPS, ANTA, APVO, ARAY, ATLX, AURE, BHST, BNKK, BTOG, BYAH, CBAT
+
+Full report and CSVs attached.
