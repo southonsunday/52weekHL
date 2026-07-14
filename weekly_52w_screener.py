@@ -804,6 +804,9 @@ def main():
     # latest/ always contains only the current week's files (clean download)
     latest_dir = os.path.join(out_dir, "latest")
     os.makedirs(latest_dir, exist_ok=True)
+    # screener-report-{date}/ preserves each week's files instead of overwriting them
+    dated_dir = os.path.join(out_dir, f"screener-report-{stamp}")
+    os.makedirs(dated_dir, exist_ok=True)
 
     # --- Build combined results DataFrame ---
     h_df = highs.copy() if not highs.empty else pd.DataFrame()
@@ -846,16 +849,19 @@ def main():
                 for cell in row:
                     cell.alignment = Alignment(wrap_text=True, vertical="top")
 
-    # --- Save to latest/ (fixed filenames — always the current week only) ---
-    write_excel(os.path.join(latest_dir, "screener.xlsx"))
+    # --- Save to latest/ (fixed filenames — always the current week only) and
+    #     screener-report-{date}/ (same filenames, kept as a dated snapshot) ---
     combined_csv = combined.to_csv(index=False)
-    with open(os.path.join(latest_dir, "screener.csv"), "w") as f:
-        f.write(combined_csv)
-    with open(os.path.join(latest_dir, "report.html"), "w") as f:
-        f.write(html)
-    with open(os.path.join(latest_dir, "brief.txt"), "w") as f:
-        f.write(brief)
+    for target_dir in (latest_dir, dated_dir):
+        write_excel(os.path.join(target_dir, "screener.xlsx"))
+        with open(os.path.join(target_dir, "screener.csv"), "w") as f:
+            f.write(combined_csv)
+        with open(os.path.join(target_dir, "report.html"), "w") as f:
+            f.write(html)
+        with open(os.path.join(target_dir, "brief.txt"), "w") as f:
+            f.write(brief)
     print(f"Latest files saved to {latest_dir}/")
+    print(f"Dated snapshot saved to {dated_dir}/")
 
     attachments = [(f"screener_{stamp}.csv", combined_csv)]
 
